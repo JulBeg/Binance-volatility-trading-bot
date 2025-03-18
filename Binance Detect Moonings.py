@@ -26,6 +26,9 @@ import importlib
 # used for directory handling
 import glob
 
+# signal handling
+import signal
+
 # Needed for colorful console output Install with: python3 -m pip install colorama (Mac/Linux) or pip install colorama (PC)
 from colorama import init
 
@@ -71,6 +74,18 @@ class txcolors:
 global session_profit
 session_profit = 0
 
+# Global flag for graceful shutdown
+running = True
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    global running
+    print(f"\nReceived signal {signum}, shutting down gracefully...")
+    running = False
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 # print with timestamps
 old_out = sys.stdout
@@ -602,8 +617,18 @@ if __name__ == '__main__':
 
     # seed initial prices
     get_price()
-    while True:
-        orders, last_price, volume = buy()
-        update_portfolio(orders, last_price, volume)
-        coins_sold = sell_coins()
-        remove_from_portfolio(coins_sold)
+    while running:
+        try:
+            orders, last_price, volume = buy()
+            update_portfolio(orders, last_price, volume)
+            coins_sold = sell_coins()
+            remove_from_portfolio(coins_sold)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+            time.sleep(1)
+            continue
+
+    print("Shutdown complete")
+    sys.exit(0)
