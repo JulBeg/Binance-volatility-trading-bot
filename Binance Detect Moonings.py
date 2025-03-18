@@ -155,7 +155,11 @@ def wait_for_price():
         min_price = min(historical_prices, key = lambda x: float("inf") if x is None else float(x[coin]['price']))
         max_price = max(historical_prices, key = lambda x: -1 if x is None else float(x[coin]['price']))
 
-        threshold_check = (-1.0 if min_price[coin]['time'] > max_price[coin]['time'] else 1.0) * (float(max_price[coin]['price']) - float(min_price[coin]['price'])) / float(min_price[coin]['price']) * 100
+        try:
+            threshold_check = (-1.0 if min_price[coin]['time'] > max_price[coin]['time'] else 1.0) * (float(max_price[coin]['price']) - float(min_price[coin]['price'])) / float(min_price[coin]['price']) * 100
+        except Exception as e:
+            print(f"Error calculating threshold check for {coin}: {e}")
+            threshold_check = 0
 
         # each coin with higher gains than our CHANGE_IN_PRICE is added to the volatile_coins dict if less than MAX_COINS is not reached.
         if threshold_check > CHANGE_IN_PRICE:
@@ -175,14 +179,15 @@ def wait_for_price():
                 else:
                     print(f'{txcolors.WARNING}{coin} has gained {round(threshold_check, 3)}% within the last {TIME_DIFFERENCE} minutes, but you are holding max number of coins{txcolors.DEFAULT}')
 
-        elif threshold_check < CHANGE_IN_PRICE:
+        if threshold_check > 0:
+            coins_up += 1
+        elif threshold_check < 0:
             coins_down +=1
-
         else:
             coins_unchanged +=1
 
     # Disabled until fix
-    #print(f'Up: {coins_up} Down: {coins_down} Unchanged: {coins_unchanged}')
+    print(f'Up: {coins_up} Down: {coins_down} Unchanged: {coins_unchanged}')
 
     # Here goes new code for external signalling
     externals = external_signals()
