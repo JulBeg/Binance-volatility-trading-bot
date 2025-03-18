@@ -158,8 +158,9 @@ def wait_for_price():
         try:
             threshold_check = (-1.0 if min_price[coin]['time'] > max_price[coin]['time'] else 1.0) * (float(max_price[coin]['price']) - float(min_price[coin]['price'])) / float(min_price[coin]['price']) * 100
         except Exception as e:
-            print(f"Error calculating threshold check for {coin}: {e}")
-            threshold_check = 0
+            if DEBUG:
+                print(f"Error calculating threshold check for {coin}: {e}")
+            continue
 
         # each coin with higher gains than our CHANGE_IN_PRICE is added to the volatile_coins dict if less than MAX_COINS is not reached.
         if threshold_check > CHANGE_IN_PRICE:
@@ -186,8 +187,8 @@ def wait_for_price():
         else:
             coins_unchanged +=1
 
-    # Disabled until fix
-    print(f'Up: {coins_up} Down: {coins_down} Unchanged: {coins_unchanged}')
+    if DEBUG:
+        print(f'Up: {coins_up} Down: {coins_down} Unchanged: {coins_unchanged}')
 
     # Here goes new code for external signalling
     externals = external_signals()
