@@ -28,12 +28,15 @@ import glob
 
 # Needed for colorful console output Install with: python3 -m pip install colorama (Mac/Linux) or pip install colorama (PC)
 from colorama import init
+
 init()
 
 # needed for the binance API / websockets / Exception handling
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
-from requests.exceptions import ReadTimeout, ConnectionError
+
+# needed to round to step size
+from binance.helpers import round_step_size
 
 # used for dates
 from datetime import date, datetime, timedelta
@@ -52,9 +55,8 @@ from helpers.parameters import (
 
 # Load creds modules
 from helpers.handle_creds import (
-    load_correct_creds, test_api_key
+    load_correct_creds
 )
-
 
 # for colourful logging to the console
 class txcolors:
@@ -64,7 +66,6 @@ class txcolors:
     SELL_PROFIT = '\033[32m'
     DIM = '\033[2m\033[35m'
     DEFAULT = '\033[39m'
-
 
 # tracks profit/loss each session
 global session_profit
@@ -104,11 +105,12 @@ def get_price(add_to_historical=True):
     for coin in prices:
 
         if CUSTOM_LIST:
-            if any(item + PAIR_WITH == coin['symbol'] for item in tickers) and all(item not in coin['symbol'] for item in FIATS):
-                initial_price[coin['symbol']] = { 'price': coin['price'], 'time': datetime.now()}
+            if any(item + PAIR_WITH == coin['symbol'] for item in tickers) and all(
+                    item not in coin['symbol'] for item in FIATS):
+                initial_price[coin['symbol']] = {'price': coin['price'], 'time': datetime.now()}
         else:
             if PAIR_WITH in coin['symbol'] and all(item not in coin['symbol'] for item in FIATS):
-                initial_price[coin['symbol']] = { 'price': coin['price'], 'time': datetime.now()}
+                initial_price[coin['symbol']] = {'price': coin['price'], 'time': datetime.now()}
 
     if add_to_historical:
         hsp_head += 1
@@ -135,7 +137,7 @@ def wait_for_price():
     coins_unchanged = 0
 
     pause_bot()
-
+    
     if historical_prices[hsp_head]['BNB' + PAIR_WITH]['time'] > datetime.now() - timedelta(minutes=float(TIME_DIFFERENCE / RECHECK_INTERVAL)):
 
         # sleep for exactly the amount of time required
@@ -187,8 +189,7 @@ def wait_for_price():
     exnumber = 0
 
     for excoin in externals:
-        if excoin not in volatile_coins and excoin not in coins_bought and \
-                (len(coins_bought) + exnumber + len(volatile_coins)) < MAX_COINS:
+        if excoin not in volatile_coins and excoin not in coins_bought and (len(coins_bought) + exnumber) < MAX_COINS:
             volatile_coins[excoin] = 1
             exnumber +=1
             print(f'External signal received on {excoin}, calculating volume in {PAIR_WITH}')
@@ -299,7 +300,6 @@ def buy():
         # only buy if the there are no active trades on the coin
         if coin not in coins_bought:
             print(f"{txcolors.BUY}Preparing to buy {volume[coin]} {coin}{txcolors.DEFAULT}")
-
             if TEST_MODE:
                 orders[coin] = [{
                     'symbol': coin,
@@ -316,10 +316,10 @@ def buy():
             # try to create a real order if the test orders did not raise an exception
             try:
                 buy_limit = client.create_order(
-                    symbol = coin,
-                    side = 'BUY',
-                    type = 'MARKET',
-                    quantity = volume[coin]
+                    symbol=coin,
+                    side='BUY',
+                    type='MARKET',
+                    quantity=volume[coin]
                 )
 
             # error handling here in case position cannot be placed
@@ -362,20 +362,24 @@ def sell_coins():
 
     for coin in list(coins_bought):
         # define stop loss and take profit
-        TP = float(coins_bought[coin]['bought_at']) + (float(coins_bought[coin]['bought_at']) * coins_bought[coin]['take_profit']) / 100
-        SL = float(coins_bought[coin]['bought_at']) + (float(coins_bought[coin]['bought_at']) * coins_bought[coin]['stop_loss']) / 100
-
+        BuyPrice = float(coins_bought[coin]['bought_at'])
+        try:
+            TP = BuyPrice + (BuyPrice) * coins_bought[coin]['take_profit'] / 100
+            SL = BuyPrice + (BuyPrice) * coins_bought[coin]['stop_loss'] / 100
+        # When an older version of the script is being executed
+        except KeyError:
+            TP = BuyPrice + (BuyPrice) / 100
+            SL = BuyPrice + (BuyPrice) / 100
 
         LastPrice = float(last_price[coin]['price'])
-        BuyPrice = float(coins_bought[coin]['bought_at'])
         PriceChange = float((LastPrice - BuyPrice) / BuyPrice * 100)
 
         # check that the price is above the take profit and readjust SL and TP accordingly if trialing stop loss used
         if LastPrice > TP and USE_TRAILING_STOP_LOSS:
 
             # increasing TP by TRAILING_TAKE_PROFIT (essentially next time to readjust SL)
-            coins_bought[coin]['stop_loss'] = coins_bought[coin]['take_profit'] - TRAILING_STOP_LOSS
             coins_bought[coin]['take_profit'] = PriceChange + TRAILING_TAKE_PROFIT
+            coins_bought[coin]['stop_loss'] = coins_bought[coin]['take_profit'] - TRAILING_STOP_LOSS
             if DEBUG: print(f"{coin} TP reached, adjusting TP {coins_bought[coin]['take_profit']:.2f}  and SL {coins_bought[coin]['stop_loss']:.2f} accordingly to lock-in profit")
             continue
 
@@ -385,14 +389,20 @@ def sell_coins():
 
             # try to create a real order
             try:
+                try:
+                    rounded_amount = round_step_size(coins_bought[coin]['volume'], coins_bought[coin]['step_size'])
+                except Exception:
+                    tick_size = float(next(
+                        filter(lambda f: f['filterType'] == 'LOT_SIZE', client.get_symbol_info(coin)['filters'])
+                    )['stepSize'])
+                    rounded_amount = round_step_size(coins_bought[coin]['volume'], tick_size)
 
                 if not TEST_MODE:
                     sell_coins_limit = client.create_order(
                         symbol = coin,
                         side = 'SELL',
                         type = 'MARKET',
-                        quantity = coins_bought[coin]['volume']
-
+                        quantity = rounded_amount
                     )
 
             # error handling here in case position cannot be placed
@@ -427,7 +437,9 @@ def update_portfolio(orders, last_price, volume):
     '''add every coin bought to our portfolio for tracking/selling later'''
     if DEBUG: print(orders)
     for coin in orders:
-
+        coin_step_size = float(next(
+                        filter(lambda f: f['filterType'] == 'LOT_SIZE', client.get_symbol_info(orders[coin][0]['symbol'])['filters'])
+                        )['stepSize'])
         coins_bought[coin] = {
             'symbol': orders[coin][0]['symbol'],
             'orderid': orders[coin][0]['orderId'],
@@ -436,7 +448,8 @@ def update_portfolio(orders, last_price, volume):
             'volume': volume[coin],
             'stop_loss': -STOP_LOSS,
             'take_profit': TAKE_PROFIT,
-            }
+            'step_size': coin_step_size,
+        }
 
         # save the coins in a json file in the same directory
         with open(coins_bought_file_path, 'w') as file:
@@ -456,7 +469,7 @@ def remove_from_portfolio(coins_sold):
 
 def write_log(logline):
     timestamp = datetime.now().strftime("%d/%m %H:%M:%S")
-    with open(LOG_FILE,'a+') as f:
+    with open(LOG_FILE, 'a+') as f:
         f.write(timestamp + ' ' + logline + '\n')
 
 if __name__ == '__main__':
@@ -485,7 +498,6 @@ if __name__ == '__main__':
     LOG_TRADES = parsed_config['script_options'].get('LOG_TRADES')
     LOG_FILE = parsed_config['script_options'].get('LOG_FILE')
     DEBUG_SETTING = parsed_config['script_options'].get('DEBUG')
-    AMERICAN_USER = parsed_config['script_options'].get('AMERICAN_USER')
 
     # Load trading vars
     PAIR_WITH = parsed_config['trading_options']['PAIR_WITH']
@@ -516,16 +528,10 @@ if __name__ == '__main__':
 
 
     # Authenticate with the client, Ensure API key is good before continuing
-    if AMERICAN_USER:
-        client = Client(access_key, secret_key, tld='us')
-    else:
-        client = Client(access_key, secret_key)
-        
-    # If the users has a bad / incorrect API key.
-    # this will stop the script from starting, and display a helpful error.
-    api_ready, msg = test_api_key(client, BinanceAPIException)
-    if api_ready is not True:
-       exit(f'{txcolors.SELL_LOSS}{msg}{txcolors.DEFAULT}')
+    client = Client(access_key, secret_key)
+    #api_ready, msg = test_api_key(client, BinanceAPIException)
+    #if api_ready is not True:
+    #    exit(f'{txcolors.SELL_LOSS}{msg}{txcolors.DEFAULT}')
 
     # Use CUSTOM_LIST symbols if CUSTOM_LIST is set to True
     if CUSTOM_LIST: tickers=[line.strip() for line in open(TICKERS_LIST)]
@@ -590,19 +596,8 @@ if __name__ == '__main__':
 
     # seed initial prices
     get_price()
-    READ_TIMEOUT_COUNT=0
-    CONNECTION_ERROR_COUNT = 0
     while True:
-        try:
-            orders, last_price, volume = buy()
-            update_portfolio(orders, last_price, volume)
-            coins_sold = sell_coins()
-            remove_from_portfolio(coins_sold)
-        except ReadTimeout as rt:
-            READ_TIMEOUT_COUNT += 1
-            print(f'{txcolors.WARNING}We got a timeout error from from binance. Going to re-loop. Current Count: {READ_TIMEOUT_COUNT}\n{rt}{txcolors.DEFAULT}')
-        except ConnectionError as ce:
-            CONNECTION_ERROR_COUNT +=1 
-            print(f'{txcolors.WARNING}We got a timeout error from from binance. Going to re-loop. Current Count: {CONNECTION_ERROR_COUNT}\n{ce}{txcolors.DEFAULT}')
-
-
+        orders, last_price, volume = buy()
+        update_portfolio(orders, last_price, volume)
+        coins_sold = sell_coins()
+        remove_from_portfolio(coins_sold)
