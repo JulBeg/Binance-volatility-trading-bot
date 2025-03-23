@@ -58,7 +58,7 @@ from helpers.parameters import (
 
 # Load creds modules
 from helpers.handle_creds import (
-    load_correct_creds
+    load_correct_creds, test_api_key
 )
 
 # for colourful logging to the console
@@ -493,66 +493,61 @@ def write_log(logline):
     with open(LOG_FILE, 'a+') as f:
         f.write(timestamp + ' ' + logline + '\n')
 
-if __name__ == '__main__':
+def get_env_var(var_name):
+    """Get required environment variable value"""
+    value = os.environ.get(var_name)
+    if value is None:
+        raise ValueError(f"Environment variable {var_name} must be set")
+    return value
 
-    # Load arguments then parse settings
-    args = parse_args()
+if __name__ == '__main__':
     mymodule = {}
 
     # set to false at Start
     global bot_paused
     bot_paused = False
 
-    DEFAULT_CONFIG_FILE = 'config.yml'
-    DEFAULT_CREDS_FILE = 'creds.yml'
-
-    config_file = args.config if args.config else DEFAULT_CONFIG_FILE
-    creds_file = args.creds if args.creds else DEFAULT_CREDS_FILE
-    parsed_config = load_config(config_file)
-    parsed_creds = load_config(creds_file)
-
     # Default no debugging
     DEBUG = False
 
     # Load system vars
-    TEST_MODE = parsed_config['script_options']['TEST_MODE']
-    LOG_TRADES = parsed_config['script_options'].get('LOG_TRADES')
-    LOG_FILE = parsed_config['script_options'].get('LOG_FILE')
-    DEBUG_SETTING = parsed_config['script_options'].get('DEBUG')
+    TEST_MODE = get_env_var('TEST_MODE') == 'True'
+    NOTIMEOUT = get_env_var('NOTIMEOUT') == 'True'
+    LOG_TRADES = get_env_var('LOG_TRADES') == 'True'
+    LOG_FILE = get_env_var('LOG_FILE')
+    AMERICAN_USER = get_env_var('AMERICAN_USER') == 'True'
 
     # Load trading vars
-    PAIR_WITH = parsed_config['trading_options']['PAIR_WITH']
-    QUANTITY = parsed_config['trading_options']['QUANTITY']
-    MAX_COINS = parsed_config['trading_options']['MAX_COINS']
-    FIATS = parsed_config['trading_options']['FIATS']
-    TIME_DIFFERENCE = parsed_config['trading_options']['TIME_DIFFERENCE']
-    RECHECK_INTERVAL = parsed_config['trading_options']['RECHECK_INTERVAL']
-    CHANGE_IN_PRICE = parsed_config['trading_options']['CHANGE_IN_PRICE']
-    STOP_LOSS = parsed_config['trading_options']['STOP_LOSS']
-    TAKE_PROFIT = parsed_config['trading_options']['TAKE_PROFIT']
-    CUSTOM_LIST = parsed_config['trading_options']['CUSTOM_LIST']
-    TICKERS_LIST = parsed_config['trading_options']['TICKERS_LIST']
-    USE_TRAILING_STOP_LOSS = parsed_config['trading_options']['USE_TRAILING_STOP_LOSS']
-    TRAILING_STOP_LOSS = parsed_config['trading_options']['TRAILING_STOP_LOSS']
-    TRAILING_TAKE_PROFIT = parsed_config['trading_options']['TRAILING_TAKE_PROFIT']
-    TRADING_FEE = parsed_config['trading_options']['TRADING_FEE']
-    SIGNALLING_MODULES = parsed_config['trading_options']['SIGNALLING_MODULES']
-    if DEBUG_SETTING or args.debug:
-        DEBUG = True
+    PAIR_WITH = get_env_var('PAIR_WITH')
+    QUANTITY = float(get_env_var('QUANTITY'))
+    MAX_COINS = int(get_env_var('MAX_COINS'))
+    FIATS = ['EURUSDT', 'GBPUSDT', 'JPYUSDT', 'USDUSDT', 'DOWN', 'UP']
+    TIME_DIFFERENCE = int(get_env_var('TIME_DIFFERENCE'))
+    RECHECK_INTERVAL = int(get_env_var('RECHECK_INTERVAL'))
+    CHANGE_IN_PRICE = float(get_env_var('CHANGE_IN_PRICE'))
+    STOP_LOSS = float(get_env_var('STOP_LOSS'))
+    TAKE_PROFIT = float(get_env_var('TAKE_PROFIT'))
+    CUSTOM_LIST = get_env_var('CUSTOM_LIST') == 'True'
+    TICKERS_LIST = get_env_var('TICKERS_LIST')
+    USE_TRAILING_STOP_LOSS = get_env_var('USE_TRAILING_STOP_LOSS') == 'True'
+    TRAILING_STOP_LOSS = float(get_env_var('TRAILING_STOP_LOSS'))
+    TRAILING_TAKE_PROFIT = float(get_env_var('TRAILING_TAKE_PROFIT'))
+    TRADING_FEE = float(get_env_var('TRADING_FEE'))
+    SIGNALLING_MODULES = get_env_var('SIGNALLING_MODULES').split(',')
 
-    # Load creds for correct environment
-    access_key, secret_key = load_correct_creds(parsed_creds)
+    # Load credentials from environment variables
+    access_key = get_env_var('BINANCE_KEY')
+    secret_key = get_env_var('BINANCE_SECRET')
 
     if DEBUG:
-        print(f'loaded config below\n{json.dumps(parsed_config, indent=4)}')
-        print(f'Your credentials have been loaded from {creds_file}')
+        print('Your credentials have been loaded from environment variables')
 
-
-    # Authenticate with the client, Ensure API key is good before continuing
+    # Authenticate with the client
     client = Client(access_key, secret_key)
-    #api_ready, msg = test_api_key(client, BinanceAPIException)
-    #if api_ready is not True:
-    #    exit(f'{txcolors.SELL_LOSS}{msg}{txcolors.DEFAULT}')
+    if not TEST_MODE:
+        api_ready, msg = test_api_key(client, BinanceAPIException)
+        if api_ready is not True:
+            exit(f'{txcolors.SELL_LOSS}{msg}{txcolors.DEFAULT}')
 
     # Use CUSTOM_LIST symbols if CUSTOM_LIST is set to True
     if CUSTOM_LIST: tickers=[line.strip() for line in open(TICKERS_LIST)]
@@ -582,7 +577,7 @@ if __name__ == '__main__':
     print('Press Ctrl-Q to stop the script')
 
     if not TEST_MODE:
-        if not args.notimeout: # if notimeout skip this (fast for dev tests)
+        if not NOTIMEOUT: # if notimeout skip this (fast for dev tests)
             print('WARNING: You are using the Mainnet and live funds. Waiting 30 seconds as a security measure')
             time.sleep(30)
 

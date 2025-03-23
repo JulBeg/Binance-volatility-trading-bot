@@ -1,6 +1,8 @@
 services:
     binance_bot:
         build: ./
+        env_file:
+            - .env
         volumes:
             - "./:/usr/src/app"
         command: python3 Binance\ Detect\ Moonings.py

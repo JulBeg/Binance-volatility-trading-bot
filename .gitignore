@@ -1,4 +1,3 @@
-creds.yml
 trades.txt
 
 __*__
@@ -11,3 +10,6 @@ __*__
 
 # IDE settings
 .vscode
+
+# Environment variables
+.env
