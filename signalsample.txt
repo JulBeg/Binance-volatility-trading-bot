@@ -13,4 +13,3 @@ SOL
 ETC
 FIL
 EOS
-XMR

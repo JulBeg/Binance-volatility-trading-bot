@@ -32,6 +32,9 @@ import signal
 # Needed for colorful console output Install with: python3 -m pip install colorama (Mac/Linux) or pip install colorama (PC)
 from colorama import init
 
+# needed for Telegram notifications
+import requests
+
 init()
 
 # needed for the binance API / websockets / Exception handling
@@ -137,6 +140,21 @@ def get_price(add_to_historical=True):
 
     return initial_price
 
+def send_profit_notification():
+    """Send profit notification to Telegram"""
+    global last_profit_notification_time
+    current_time = datetime.now()
+    
+    
+    if not hasattr(send_profit_notification, 'last_profit_notification_time'):
+        send_profit_notification.last_profit_notification_time = current_time
+        return
+        
+    time_diff = (current_time - send_profit_notification.last_profit_notification_time).total_seconds() / 60
+    
+    if time_diff >= TELEGRAM_PROFIT_INTERVAL:
+        send_telegram_message(f"💰 Session Profit: {session_profit:.2f}% (${(QUANTITY * session_profit)/100:.2f})")
+        send_profit_notification.last_profit_notification_time = current_time
 
 def wait_for_price():
     '''calls the initial price and ensures the correct amount of time has passed
@@ -160,7 +178,10 @@ def wait_for_price():
 
     print(f'Working...Session profit:{session_profit:.2f}% Est:${(QUANTITY * session_profit)/100:.2f}')
 
-    # retreive latest prices
+    # Send profit notification
+    send_profit_notification()
+
+    # retrieve latest prices
     get_price()
 
     # calculate the difference in prices
@@ -317,7 +338,6 @@ def buy():
     orders = {}
 
     for coin in volume:
-
         # only buy if the there are no active trades on the coin
         if coin not in coins_bought:
             print(f"{txcolors.BUY}Preparing to buy {volume[coin]} {coin}{txcolors.DEFAULT}")
@@ -330,7 +350,9 @@ def buy():
 
                 # Log trade
                 if LOG_TRADES:
-                    write_log(f"Buy : {volume[coin]} {coin} - {last_price[coin]['price']}")
+                    message = f"🟢 Buy : {volume[coin]} {coin} - {last_price[coin]['price']}"
+                    write_log(message)
+                    send_telegram_message(message)
 
                 continue
 
@@ -363,7 +385,9 @@ def buy():
 
                     # Log trade
                     if LOG_TRADES:
-                        write_log(f"Buy : {volume[coin]} {coin} - {last_price[coin]['price']}")
+                        message = f"🟢 Buy : {volume[coin]} {coin} - {last_price[coin]['price']}"
+                        write_log(message)
+                        send_telegram_message(message)
 
 
         else:
@@ -440,8 +464,12 @@ def sell_coins():
                 # Log trade
                 if LOG_TRADES:
                     profit = ((LastPrice - BuyPrice) * coins_sold[coin]['volume'])* (1-(TRADING_FEE*2)) # adjust for trading fee here
-                    write_log(f"Sell: {coins_sold[coin]['volume']} {coin} - {BuyPrice} - {LastPrice} Profit: {profit:.2f} {PriceChange-(TRADING_FEE*2):.2f}%")
                     session_profit=session_profit + (PriceChange-(TRADING_FEE*2))
+                    
+                    emoji = "🟢" if PriceChange >= 0 else "🔴"
+                    message = f"{emoji} Sell: {coins_sold[coin]['volume']} {coin} - {BuyPrice} - {LastPrice} Profit: {profit:.2f} {PriceChange-(TRADING_FEE*2):.2f}%"
+                    write_log(message)
+                    send_telegram_message(message)
             continue
 
         # no action; print once every TIME_DIFFERENCE
@@ -500,6 +528,22 @@ def get_env_var(var_name):
         raise ValueError(f"Environment variable {var_name} must be set")
     return value
 
+def send_telegram_message(message):
+    """Send message to Telegram channel"""
+    try:
+        bot_token = get_env_var('TELEGRAM_BOT_TOKEN')
+        chat_id = get_env_var('TELEGRAM_CHAT_ID')
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+        requests.post(url, data=data)
+    except Exception as e:
+        if DEBUG:
+            print(f"Error sending Telegram message: {e}")
+
 if __name__ == '__main__':
     mymodule = {}
 
@@ -516,6 +560,7 @@ if __name__ == '__main__':
     LOG_TRADES = get_env_var('LOG_TRADES') == 'True'
     LOG_FILE = get_env_var('LOG_FILE')
     AMERICAN_USER = get_env_var('AMERICAN_USER') == 'True'
+    TELEGRAM_PROFIT_INTERVAL = int(get_env_var('TELEGRAM_PROFIT_INTERVAL'))  # Default 60 minutes
 
     # Load trading vars
     PAIR_WITH = get_env_var('PAIR_WITH')
@@ -612,12 +657,27 @@ if __name__ == '__main__':
 
     # seed initial prices
     get_price()
+    
+    # Send startup notification
+    startup_msg = f"""🤖 Bot Started
+Mode: {'TEST' if TEST_MODE else 'LIVE'}
+Pair: {PAIR_WITH}
+Max Coins: {MAX_COINS}
+Quantity: {QUANTITY}
+Time Difference: {TIME_DIFFERENCE}min
+Recheck Interval: {RECHECK_INTERVAL}
+Change in Price: {CHANGE_IN_PRICE}%
+Stop Loss: {STOP_LOSS}%
+Take Profit: {TAKE_PROFIT}%"""
+    send_telegram_message(startup_msg)
+    
     while running:
         try:
             orders, last_price, volume = buy()
             update_portfolio(orders, last_price, volume)
             coins_sold = sell_coins()
             remove_from_portfolio(coins_sold)
+            send_profit_notification()
         except KeyboardInterrupt:
             break
         except Exception as e:
